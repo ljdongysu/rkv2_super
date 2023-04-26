@@ -4,7 +4,7 @@
 #include <queue>
 #include <opencv2/highgui.hpp>
 #include "rknn_fp.h"
-
+#include "SpRun.h"
 #include "pthread.h"
 //#include "rknn_api.h"
 #include<sys/time.h>
@@ -13,6 +13,7 @@
 #include <rknn_api.h>
 #include <opencv2/imgproc.hpp>
 #include "fstream"
+#include "timer.h"
 
 // 读取rknn模型输入/输出属性
 void dump_tensor_attr(rknn_tensor_attr* attr)
@@ -25,6 +26,47 @@ void dump_tensor_attr(rknn_tensor_attr* attr)
     return;
 }
 
+using Points = std::vector<FeaturePoint>;
+using Describes = std::vector<std::vector<float>>;
+
+struct Array
+{
+    float* data = nullptr;
+    std::vector<uint> dims{};
+
+    ~Array()
+    {
+        Release();
+    }
+    void Release()
+    {
+        delete[] data;
+    }
+};
+
+void Reshape(Array &input, TensorType &output)
+{
+    int featureSize = input.dims[0] * input.dims[1];
+
+    output.resize(input.dims[2], std::vector<float>(featureSize, 0));
+    for (int i = 0; i < input.dims[2]; ++i)
+    {
+        int id = featureSize * i;
+        memcpy(output.at(i).data(), input.data + id, featureSize * sizeof(float));
+        continue;
+//         whc -> chw
+        for (int j = 0; j < input.dims[1]; ++j)
+        {
+            for (int k = 0; k < input.dims[0]; ++k)
+            {
+                int idSrc = k * input.dims[2] * input.dims[1] + j * input.dims[2] + i;
+                int idDst = j * input.dims[1] + k;
+                output.at(i).at(idDst) = input.data[idSrc];
+            }
+        }
+    }
+}
+
 
 int main(int argc, char **argv) {       // void main没有返回值，int main有返回值。
 //    printf("开始了没有");
@@ -34,10 +76,10 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
     //Inputs and Output sets
     rknn_context ctx;
     rknn_tensor_attr _input_attrs[1];
-    rknn_tensor_attr _output_attrs[3];
+    rknn_tensor_attr _output_attrs[2];
     rknn_tensor_mem* _input_mems[1];
-    rknn_tensor_mem* _output_mems[3];
-    float* _output_buff[3];
+    rknn_tensor_mem* _output_mems[2];
+    float* _output_buff[2];
 
     std::cout << "argc数量" << argc << std::endl;    // argc 是参数的个数， 第一个是工程的名字，第二第三是要输入的参数
     if (argc < 3) {                    // 判断语句  return 0 表示完成，1 表示真，-1表示 失败
@@ -77,8 +119,7 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
 //    _n_input  = n_input;     // 这个输入是什么，看不明白
     _n_input  = 1;     // 这个输入是什么，看不明白
 //    _n_output = n_output;    // and this
-    _n_output = 1;    // and this
-
+    _n_output = 2;    // and this
 
     // Load model
 
@@ -107,15 +148,7 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
         printf("rknn_init fail! ret=%d\n", ret);
         exit(-1);
     }
-//    if (core_mask == RKNN_NPU_CORE_2)
-//    {
-//        ret = rknn_set_core_mask(ctx, core_mask);
-//        if(ret < 0)
-//        {
-//            printf("set NPU core_mask fail! ret=%d\n", ret);
-//            exit(-1);
-//        }
-//    }
+
     // rknn_sdk_version
     rknn_sdk_version version;
     ret = rknn_query(ctx, RKNN_QUERY_SDK_VERSION, &version,
@@ -147,7 +180,15 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
 
     // rknn outputs
     printf("output tensors:\n");
+    std::cout <<"sizeof(rknn_tensor_attr: " << sizeof(rknn_tensor_attr) << std::endl;
     memset(_output_attrs, 0, _n_output * sizeof(rknn_tensor_attr));
+
+    for (uint32_t i = 0; i < _n_output; i++)
+    {
+        std::cout <<"_output_attrs[i]->n_dims: " << _output_attrs[i].n_dims << ", n_elems: "
+        << _output_attrs[i].n_elems << "size: " << _output_attrs[i].size << std::endl;
+    }
+
     for (uint32_t i = 0; i < _n_output; i++) {
         _output_attrs[i].index = i;
         // query info
@@ -164,7 +205,9 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
         // default output type is depend on model, this require float32 to compute top5
         // allocate float32 output tensor
         int output_size = _output_attrs[i].n_elems * sizeof(float);
+        std::cout << "output_size: " << output_size << std::endl;
         _output_mems[i]  = rknn_create_mem(ctx, output_size);
+        std::cout << "_output_mems[i].size: " << _output_mems[i]->size << std::endl;
     }
 
     // Set input tensor memory
@@ -180,6 +223,7 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
         _output_attrs[i].type = RKNN_TENSOR_FLOAT32;
         // set output memory and attribute
         ret = rknn_set_io_mem(ctx, _output_mems[i], &_output_attrs[i]);
+        std::cout <<"dims: " << _output_attrs[i].n_elems << std::endl;
         if (ret < 0) {
             printf("rknn_set_io_mem fail! ret=%d\n", ret);
             exit(-1);
@@ -195,8 +239,8 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
     using TYPE = uint8_t;
     cv::cvtColor(dst, dst, cv::COLOR_BGR2GRAY);
     int width  = _input_attrs[0].dims[2];  // 2
-    std::cout<<"111111111"<< width<<std::endl;
-//    memcpy(_input_mems[0]->virt_addr, dst.data, width*_input_attrs[0].dims[1]*_input_attrs[0].dims[3]);
+
+    //    memcpy(_input_mems[0]->virt_addr, dst.data, width*_input_attrs[0].dims[1]*_input_attrs[0].dims[3]);
     memcpy(_input_mems[0]->virt_addr, dst.data, width*_input_attrs[0].dims[1]*_input_attrs[0].dims[3]);
 //    memcpy(_input_mems[0]->virt_addr, dst.data, 640*400*1);
 
@@ -210,7 +254,6 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
 
     // rknn inference
     ret = rknn_run(ctx, nullptr);
-    std::cout<<"1111111112222"<<std::endl;
 
     std::cout<<ret<<std::endl;
     if(ret < 0) {
@@ -223,13 +266,51 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
 
     for(int i=0;i<_n_output;i++){
         _output_buff[i] = (float*)_output_mems[i]->virt_addr;
+        std::cout << "output.size[" << i << "]: " << _output_mems[i]->size << std::endl;
+        PrintMatrix(_output_buff[i], 80);
     }
 
     std::cout << "运行时间：= " << perf_run.run_duration << std::endl;
 
+    Timer timer, timerAll;
+
+    Array semi, coarse_desc;
+    semi.data = (float *) malloc(80 * 50 * 65 * sizeof (float));
+    semi.dims = {80, 50, 65, 1};
+
+    coarse_desc.data = (float *) malloc(80 * 50 * 256 * sizeof (float));
+    coarse_desc.dims = {80, 50, 256, 1};
+
+    memcpy(semi.data, _output_buff[0],80 * 50 * 65 * sizeof (float));
+    memcpy(coarse_desc.data, _output_buff[1],80 * 50 * 256 * sizeof (float));
+
+    ret = rknn_destroy_mem(ctx, _input_mems[0]);
+    ret &= rknn_destroy_mem(ctx, _output_mems[0]);
+    ret &= rknn_destroy_mem(ctx, _output_mems[1]);
+
+    long long height = 400;
+    TensorType semiResult, descResult;  // (65, 50*80) (256, 50*80)
+
+
+    Reshape(semi, semiResult);
+    Reshape(coarse_desc, descResult);
+
+    timer.Timing("reshape output", true);
+    SpRun::Norm(descResult);
+//    PrintMatrix(descResult[0].data(), 80);
+    timer.Timing("normal.", true);
+
+//    PrintMatrix(semiResult[0].data(), 80);
+    int outpixNum = 80 * 50;
+
+    Points points;
+    Describes describes;
+
+    SpRun *sp = new SpRun(coarse_desc.dims[2], outpixNum, height, width);
+    sp->calc(semiResult, descResult, image_in, points, describes);
+    timerAll.Timing("post process", true);
+
+//    SpRun::ShowImage("/root/super_rknn/BASE_20_1663000760415159.jpg", points, image_in);
+
 }
 
-/*
- /root/super_rknn/rkv2_super.rknn
-/root/super_rknn/rknn.jpg
- */
