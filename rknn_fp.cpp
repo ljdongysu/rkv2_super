@@ -15,6 +15,7 @@
 #include "fstream"
 #include "timer.h"
 
+#define RAND_INT(a, b) (rand() % ((b)-(a)+1))+ (a)
 // 读取rknn模型输入/输出属性
 void dump_tensor_attr(rknn_tensor_attr* attr)
 {
@@ -28,6 +29,7 @@ void dump_tensor_attr(rknn_tensor_attr* attr)
 
 using Points = std::vector<FeaturePoint>;
 using Describes = std::vector<std::vector<float>>;
+int RunSuperPoint( std::string modelFile, std::string file1, Points &points, Describes &describes);
 
 struct Array
 {
@@ -68,7 +70,128 @@ void Reshape(Array &input, TensorType &output)
 }
 
 
-int main(int argc, char **argv) {       // void main没有返回值，int main有返回值。
+cv::Mat ConvertVectorMat(const TensorType &descResultLeft)
+{
+//    cv::Mat imageResult(0, descResultLeft[0].size(), cv::DataType<float>::type);
+//    for (int i = 0; i < descResultLeft.size(); ++i)
+//    {
+//        cv::Mat Sample(1, descResultLeft[0].size(), cv::DataType<float>::type, descResultLeft[i].data());
+//        imageResult.push_back(Sample);
+//    }
+
+    if (descResultLeft.size() > 0)
+    {
+        cv::Mat imageResult(descResultLeft.size(), descResultLeft[0].size(), CV_32F);
+        for (int i = 0; i < descResultLeft.size(); ++i)
+            imageResult.row(i) = cv::Mat(descResultLeft[0]).t();
+
+        return imageResult;
+    }
+    else
+    {
+        std::cout << "describes.size() == 0" << std::endl;
+        cv::Mat image;
+        return image;
+    }
+}
+
+
+void ShowMatch(cv::Mat imgLeft, cv::Mat imgRight
+        , const std::string extendName
+        , const Points &pointsLeft, const Points &pointsRight
+        , const std::vector<cv::DMatch> matches)
+{
+    cv::Mat imageLeftRight;
+    int drawPoints = 0;
+    const int W = imgLeft.cols, H = imgLeft.rows;
+
+    SpRun::ShowImage("", pointsLeft, imgLeft);
+    SpRun::ShowImage("", pointsRight, imgRight);
+    cv::hconcat(imgLeft, imgRight, imageLeftRight);
+
+    for (int i = 0; i < matches.size(); ++i)
+    {
+        cv::DMatch dMatch;
+        dMatch = matches[i];
+        const auto &left = pointsLeft[dMatch.queryIdx];
+        const auto &right = pointsRight[dMatch.trainIdx];
+        cv::Point leftCV = cv::Point(left.x, left.y);
+        cv::Point rightCV = cv::Point(right.x + imgLeft.cols, right.y);
+
+        if (abs(left.y - right.y) > 20) continue;
+        drawPoints += 1;
+
+        cv::line(imageLeftRight, leftCV, rightCV, cv::Scalar(RAND_INT(0, 255), RAND_INT(0, 255)
+                , RAND_INT(0, 255)), 1, cv::LINE_AA);
+//        cv::circle(imageLeftRight, leftCV, 2, GetColor(left.confidence), -1, 8, 0);
+//        cv::circle(imageLeftRight, rightCV, 2, GetColor(right.confidence), -1, 8, 0);
+    }
+
+    cv::putText(imageLeftRight, "match " + std::to_string(drawPoints) + "", cv::Point(50, H - 30)
+            , cv::FONT_HERSHEY_COMPLEX
+            , 1, cv::Scalar(0, 255, 0), 2);
+
+    std::string outputFile;
+    char *p = getcwd(NULL, 0);
+    outputFile = std::string(p) + "/" + "result" + "/result_" + extendName + ".jpg";
+    cv::imwrite(outputFile, imageLeftRight);
+
+    std::cout << outputFile << std::endl;
+}
+
+
+std::vector<cv::DMatch>
+Match(const Points &semiResultLeft, const Points &semiResultRight, const TensorType &descResultLeft
+        , const TensorType &descResultRight, std::vector<cv::DMatch> &matches)
+{
+    cv::BFMatcher matcher;
+    cv::Mat descriptorLeft = ConvertVectorMat(descResultLeft);
+    cv::Mat descriptorRight = ConvertVectorMat(descResultRight);
+
+    matcher.match(descriptorLeft, descriptorRight, matches);
+    std::cout << "point-L: " << semiResultLeft.size() << " point-R: "
+              << semiResultRight.size() << " , matches: " << matches.size() << std::endl;
+}
+
+int main(int argc, char **argv)
+{
+    std::cout << "argc数量" << argc << std::endl;    // argc 是参数的个数， 第一个是工程的名字，第二第三是要输入的参数
+    if (argc < 3) {                    // 判断语句  return 0 表示完成，1 表示真，-1表示 失败
+        std::cout << "modelpath: mnnpath:\n"
+                  << "data_path: images.txt\n"
+                  << std::endl;
+        return -1;
+    }
+    if (argc == 3)
+    {
+        Points points;
+        Describes describes;
+        RunSuperPoint( argv[1], argv[2], points, describes);
+        cv::Mat image_in = cv::imread(argv[2]);
+        SpRun::ShowImage(argv[2], points, image_in);
+    }
+    else if (argc == 4)
+    {
+        Points pointsL, pointsR;
+        Describes describesL, describesR;
+        std::vector<cv::DMatch> matches;
+
+        cv::Mat imageL, imageR;
+        imageL = cv::imread(argv[2]);
+        imageR = cv::imread(argv[3]);
+
+        RunSuperPoint( argv[1], argv[2], pointsL, describesL);
+        RunSuperPoint( argv[1], argv[3], pointsR, describesR);
+//        SpRun::ShowImage(argv[2], pointsL, image_in);
+
+        Match(pointsL, pointsR, describesL, describesR, matches);
+        ShowMatch(imageL, imageR, "tttt", pointsL, pointsR, matches);
+
+    }
+}
+
+int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points, Describes &describes)
+{
 //    printf("开始了没有");
     int _cpu_id;
     int _n_input;
@@ -81,18 +204,9 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
     rknn_tensor_mem* _output_mems[2];
     float* _output_buff[2];
 
-    std::cout << "argc数量" << argc << std::endl;    // argc 是参数的个数， 第一个是工程的名字，第二第三是要输入的参数
-    if (argc < 3) {                    // 判断语句  return 0 表示完成，1 表示真，-1表示 失败
-        std::cout << "modelpath: mnnpath:\n"
-                  << "data_path: images.txt\n"
-                  << std::endl;
-        return -1;
-    }
-
     int img_w = 640;
     int img_h = 400;
-    const char *model_path = argv[1];  // 获取模型地址
-    std::string imageFile = argv[2];   // 获取图片地址
+    const char *model_path = modelFile.c_str();  // 获取模型地址
 
     // rknn_fp 的参数，
     /*
@@ -287,7 +401,15 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
     ret = rknn_destroy_mem(ctx, _input_mems[0]);
     ret &= rknn_destroy_mem(ctx, _output_mems[0]);
     ret &= rknn_destroy_mem(ctx, _output_mems[1]);
-
+    if(ret < 0) {
+        printf("rknn_destroy_mem fail! ret=%d\n", ret);
+        return -1;
+    }
+    ret = rknn_destroy(ctx);
+    if(ret < 0) {
+        printf("rknn_destroy fail! ret=%d\n", ret);
+        return -1;
+    }
     long long height = 400;
     TensorType semiResult, descResult;  // (65, 50*80) (256, 50*80)
 
@@ -303,14 +425,9 @@ int main(int argc, char **argv) {       // void main没有返回值，int main�
 //    PrintMatrix(semiResult[0].data(), 80);
     int outpixNum = 80 * 50;
 
-    Points points;
-    Describes describes;
-
     SpRun *sp = new SpRun(coarse_desc.dims[2], outpixNum, height, width);
     sp->calc(semiResult, descResult, image_in, points, describes);
     timerAll.Timing("post process", true);
-
-//    SpRun::ShowImage("/root/super_rknn/BASE_20_1663000760415159.jpg", points, image_in);
 
 }
 
