@@ -21,7 +21,7 @@ void PrintMatrix2(const T *data, const int W)
 }
 
 SpRun::SpRun()
-        : conf_thresh(0.005f)
+        : conf_thresh(0.05f)
         , nms_dist(4)
         , border(4)
 {

@@ -83,7 +83,7 @@ cv::Mat ConvertVectorMat(const TensorType &descResultLeft)
     {
         cv::Mat imageResult(descResultLeft.size(), descResultLeft[0].size(), CV_32F);
         for (int i = 0; i < descResultLeft.size(); ++i)
-            imageResult.row(i) = cv::Mat(descResultLeft[0]).t();
+            imageResult.row(i) = cv::Mat(descResultLeft[i]).t();
 
         return imageResult;
     }
