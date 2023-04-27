@@ -281,7 +281,7 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
             printf("rknn_init error! ret=%d\n", ret);
             exit(-1);
         }
-        dump_tensor_attr(&_input_attrs[i]);
+//        dump_tensor_attr(&_input_attrs[i]);
     }
 
     // Create input tensor memory
@@ -311,7 +311,7 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
             printf("rknn_query fail! ret=%d\n", ret);
             exit(-1);
         }
-        dump_tensor_attr(&_output_attrs[i]);
+//        dump_tensor_attr(&_output_attrs[i]);
     }
 
     // Create output tensor memory
@@ -353,11 +353,11 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
     using TYPE = uint8_t;
     cv::cvtColor(dst, dst, cv::COLOR_BGR2GRAY);
     int width  = _input_attrs[0].dims[2];  // 2
+    Timer timerRun;
 
     //    memcpy(_input_mems[0]->virt_addr, dst.data, width*_input_attrs[0].dims[1]*_input_attrs[0].dims[3]);
     memcpy(_input_mems[0]->virt_addr, dst.data, width*_input_attrs[0].dims[1]*_input_attrs[0].dims[3]);
 //    memcpy(_input_mems[0]->virt_addr, dst.data, 640*400*1);
-
     //
 //    TYPE *ptr = (TYPE *) malloc(dst.rows * dst.cols * dst.channels() * sizeof(TYPE));
 //    memcpy(ptr, dst.data , dst.rows * dst.cols * dst.channels() * sizeof(TYPE));
@@ -365,10 +365,11 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
 
     // if(img.data) free(img.data);
 //    unsigned char * buff = (unsigned char *)_input_mems[0]->virt_addr;
+    Timer timerInterface;
 
     // rknn inference
     ret = rknn_run(ctx, nullptr);
-
+    timerInterface.Timing("interface", true);
     std::cout<<ret<<std::endl;
     if(ret < 0) {
         printf("rknn_run fail! ret=%d\n", ret);
@@ -380,11 +381,11 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
 
     for(int i=0;i<_n_output;i++){
         _output_buff[i] = (float*)_output_mems[i]->virt_addr;
-        std::cout << "output.size[" << i << "]: " << _output_mems[i]->size << std::endl;
-        PrintMatrix(_output_buff[i], 80);
+//        std::cout << "output.size[" << i << "]: " << _output_mems[i]->size << std::endl;
+//        PrintMatrix(_output_buff[i], 80);
     }
 
-    std::cout << "运行时间：= " << perf_run.run_duration << std::endl;
+//    std::cout << "运行时间：= " << perf_run.run_duration << std::endl;
 
     Timer timer, timerAll;
 
@@ -428,6 +429,7 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
     SpRun *sp = new SpRun(coarse_desc.dims[2], outpixNum, height, width);
     sp->calc(semiResult, descResult, image_in, points, describes);
     timerAll.Timing("post process", true);
+    timerRun.Timing("SuperPoint", true);
 
 }
 
