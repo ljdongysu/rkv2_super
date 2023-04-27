@@ -281,7 +281,7 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
             printf("rknn_init error! ret=%d\n", ret);
             exit(-1);
         }
-//        dump_tensor_attr(&_input_attrs[i]);
+        dump_tensor_attr(&_input_attrs[i]);
     }
 
     // Create input tensor memory
@@ -311,7 +311,7 @@ int RunSuperPoint( std::string modelFile, std::string imageFile, Points &points,
             printf("rknn_query fail! ret=%d\n", ret);
             exit(-1);
         }
-//        dump_tensor_attr(&_output_attrs[i]);
+        dump_tensor_attr(&_output_attrs[i]);
     }
 
     // Create output tensor memory
